@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>3D Pixel Pro - Movement Fixed</title>
+  <style>
+    body { margin: 0; background: #111; overflow: hidden; font-family: sans-serif; }
+    #ui, #settings-panel { 
+      position: absolute; color: white; background: rgba(0, 0, 0, 0.9); 
+      padding: 20px; border-radius: 10px; border: 1px solid #444; pointer-events: auto; z-index: 10;
+    }
+    #ui { top: 15px; left: 15px; width: 220px; }
+    #settings-panel { top: 15px; right: 15px; width: 220px; display: none; }
+    #restore-ui {
+      position: absolute; top: 15px; left: 15px; display: none;
+      background: #e67e22; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; z-index: 5;
+    }
+    .close-btn { position: absolute; top: 10px; right: 10px; cursor: pointer; color: #888; font-weight: bold; font-size: 18px; }
+    #preview-ui { position: absolute; bottom: 20px; right: 20px; pointer-events: auto; z-index: 10; }
+    #preview-header {
+      color: #e67e22; font-size: 10px; font-weight: bold; text-transform: uppercase;
+      background: rgba(0,0,0,0.9); padding: 5px 25px 5px 8px; border-radius: 5px 5px 0 0; border: 1px solid #444;
+    }
+    button { background: #e67e22; color: white; border: none; padding: 10px; cursor: pointer; border-radius: 5px; margin-top: 10px; width: 100%; font-weight: bold; }
+    button.alt { background: #3498db; }
+    button.active { background: #2ecc71; }
+    .label { color: #e67e22; font-size: 11px; font-weight: bold; text-transform: uppercase; margin-top: 10px; display: block; }
+    input { width: 100%; background: #222; border: 1px solid #444; color: white; padding: 5px; margin-top: 5px; border-radius: 3px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+
+  <button id="restore-ui">📂 SHOW UI</button>
+
+  <div id="ui">
+    <span class="close-btn" id="close-viewport">×</span>
+    <b>3D VIEWPORT</b><br>
+    <div class="label">Tool Mode</div>
+    <button id="btn-move" class="active">MOVE (W)</button>
+    <button id="btn-rotate">ROTATE (E)</button>
+    <button id="toggle-preview">TOGGLE PREVIEW</button>
+    <button id="toggle-settings">⚙️ SETTINGS</button>
+    <button id="snap">📸 MANUAL SNAP</button>
+  </div>
+
+  <div id="settings-panel">
+    <span class="close-btn" id="close-settings">×</span>
+    <b>PHOTO SETTINGS</b>
+    <span class="label">Resolution</span>
+    <input type="number" id="res-w" value="16">
+    <input type="number" id="res-h" value="16">
+    <button id="export-bin" class="alt" style="margin-top:20px">💾 EXPORT BINARY</button>
+    <button id="copy-hex" style="background:#9b59b6">📋 COPY HEX ARRAY</button>
+  </div>
+
+  <div id="preview-ui">
+    <div id="preview-header">LIVE PREVIEW</div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+    // 1. SETUP
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x121212);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.autoClear = false; 
+    document.body.appendChild(renderer.domElement);
+
+    const viewportCam = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    viewportCam.position.set(8, 8, 8);
+
+    // CAMERA OBJECT
+    const camBody = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.7, 1), new THREE.MeshStandardMaterial({ color: 0xff0000 }));
+    camBody.position.set(-3, 3, 3);
+    scene.add(camBody);
+
+    const photoCam = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camBody.add(photoCam);
+    const camHelper = new THREE.CameraHelper(photoCam);
+    scene.add(camHelper);
+
+    // TARGET OBJECT
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshStandardMaterial({ color: 0x00ff00 }));
+    scene.add(cube);
+
+    scene.add(new THREE.GridHelper(10, 20, 0x333333, 0x222222));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const sun = new THREE.DirectionalLight(0xffffff, 1); sun.position.set(5, 10, 5); scene.add(sun);
+
+    // 2. CONTROLS (FIXED SELECTION)
+    const orbit = new OrbitControls(viewportCam, renderer.domElement);
+    const transform = new TransformControls(viewportCam, renderer.domElement);
+    scene.add(transform);
+    transform.addEventListener('dragging-changed', (e) => orbit.enabled = !e.value);
+
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+            ((e.clientX - rect.left) / rect.width) * 2 - 1,
+            -((e.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, viewportCam);
+        const intersects = raycaster.intersectObjects([cube, camBody], true);
+        
+        if (intersects.length > 0) {
+            // If we hit something inside the camBody (like the helper), attach the camBody
+            let obj = intersects[0].object;
+            while(obj.parent && obj !== camBody && obj !== cube) { obj = obj.parent; }
+            transform.attach(obj);
+        } else if (!transform.dragging) {
+            transform.detach();
+        }
+    });
+
+    // 3. RENDER TARGETS
+    let renderTarget = new THREE.WebGLRenderTarget(16, 16, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+    const quadScene = new THREE.Scene();
+    const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: renderTarget.texture }));
+    quadScene.add(quad);
+
+    // 4. DATA LOGIC
+    function copyToClipboard(text) {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        alert("Copied!");
+    }
+
+    function capture() {
+        const w = parseInt(document.getElementById('res-w').value) || 16;
+        const h = parseInt(document.getElementById('res-h').value) || 16;
+        renderTarget.setSize(w, h);
+        
+        const tV = transform.visible; transform.visible = false;
+        camBody.visible = false; camHelper.visible = false;
+        
+        renderer.setRenderTarget(renderTarget);
+        renderer.clear();
+        renderer.render(scene, photoCam);
+        
+        const pixels = new Uint8Array(w * h * 4);
+        renderer.readRenderTargetPixels(renderTarget, 0, 0, w, h, pixels);
+        
+        renderer.setRenderTarget(null);
+        transform.visible = tV; camBody.visible = true; camHelper.visible = true;
+        return { pixels, w, h };
+    }
+
+    document.getElementById('copy-hex').onclick = () => {
+        const { pixels, w, h } = capture();
+        let str = "const uint32_t img[] = {\n";
+        for (let i = 0; i < w * h; i++) {
+            const r = pixels[i*4].toString(16).padStart(2, '0');
+            const g = pixels[i*4+1].toString(16).padStart(2, '0');
+            const b = pixels[i*4+2].toString(16).padStart(2, '0');
+            str += `0x${r}${g}${b}${i === w*h-1 ? "" : ", "}`;
+            if((i+1) % w === 0) str += "\n";
+        }
+        str += "};";
+        copyToClipboard(str);
+    };
+
+    document.getElementById('export-bin').onclick = () => {
+        const { pixels, w, h } = capture();
+        const rgb = new Uint8Array(w * h * 3);
+        for(let i=0; i<w*h; i++) {
+            rgb[i*3] = pixels[i*4]; rgb[i*3+1] = pixels[i*4+1]; rgb[i*3+2] = pixels[i*4+2];
+        }
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(new Blob([rgb]));
+        link.download = `data_${w}x${h}.bin`;
+        link.click();
+    };
+
+    document.getElementById('snap').onclick = () => {
+        const { pixels, w, h } = capture();
+        const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+        const imgData = canvas.getContext('2d').createImageData(w, h);
+        imgData.data.set(pixels);
+        canvas.getContext('2d').putImageData(imgData, 0, 0);
+        const link = document.createElement('a'); link.href = canvas.toDataURL(); link.download = 'snap.png'; link.click();
+    };
+
+    // 5. ANIMATION
+    let previewOn = true;
+    function animate() {
+        requestAnimationFrame(animate);
+        const w = Math.max(1, parseInt(document.getElementById('res-w').value) || 1);
+        const h = Math.max(1, parseInt(document.getElementById('res-h').value) || 1);
+        
+        photoCam.aspect = w / h;
+        photoCam.updateProjectionMatrix();
+
+        // 1. Render to buffer
+        const tV = transform.visible; transform.visible = false;
+        camBody.visible = false; camHelper.visible = false;
+        renderer.setRenderTarget(renderTarget);
+        renderer.render(scene, photoCam);
+        renderer.setRenderTarget(null);
+        transform.visible = tV; camBody.visible = true; camHelper.visible = true;
+
+        // 2. Main screen
+        renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+        renderer.setScissorTest(false);
+        renderer.clear();
+        renderer.render(scene, viewportCam);
+
+        // 3. Preview
+        if (previewOn) {
+            const dW = 250; const dH = dW / (w / h);
+            renderer.setScissorTest(true);
+            renderer.setScissor(window.innerWidth - dW - 20, 20, dW, dH);
+            renderer.setViewport(window.innerWidth - dW - 20, 20, dW, dH);
+            renderer.render(quadScene, quadCam);
+            renderer.setScissorTest(false);
+            document.getElementById('preview-ui').style.bottom = (dH + 20) + 'px';
+        }
+        orbit.update();
+        camHelper.update();
+    }
+
+    document.getElementById('btn-move').onclick = () => { transform.setMode('translate'); updateUI('btn-move'); };
+    document.getElementById('btn-rotate').onclick = () => { transform.setMode('rotate'); updateUI('UI-rotate'); };
+    document.getElementById('toggle-settings').onclick = () => document.getElementById('settings-panel').style.display = 'block';
+    document.getElementById('close-settings').onclick = () => document.getElementById('settings-panel').style.display = 'none';
+    document.getElementById('close-viewport').onclick = () => { document.getElementById('ui').style.display = 'none'; document.getElementById('restore-ui').style.display = 'block'; };
+    document.getElementById('restore-ui').onclick = () => { document.getElementById('ui').style.display = 'block'; document.getElementById('restore-ui').style.display = 'none'; };
+    document.getElementById('toggle-preview').onclick = () => { 
+        previewOn = !previewOn; document.getElementById('preview-ui').style.display = previewOn ? 'block' : 'none'; 
+    };
+
+    function updateUI(id) {
+        document.getElementById('btn-move').className = id === 'btn-move' ? 'active' : '';
+        document.getElementById('btn-rotate').className = id === 'btn-rotate' ? 'active' : '';
+    }
+
+    animate();
+    window.addEventListener('resize', () => {
+        viewportCam.aspect = window.innerWidth / window.innerHeight;
+        viewportCam.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
